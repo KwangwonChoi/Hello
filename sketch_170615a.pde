@@ -1,102 +1,357 @@
-import java.util.Random;
+// Daniel Shiffman
 
-int numberOfFrames = 200;  // The number of frames in the animation
-int frame = 0;
+// Tracking the average location beyond a given depth threshold
 
-fish luisy;
-void setup()
-{
-  size(800, 480);
-  frameRate(24);
-  
-  luisy = new fish("composition",80,48,200);
-  // If you don't want to load each image separately
-  // and you know how many frames you have, you
-  // can create the filenames as the program runs.
-  // The nf() command does number formatting, which will
-  // ensure that the number is (in this case) 4 digits.
-} 
- 
-void draw() 
-{
-  background(250);
-  
-  frame = (frame+1) % numberOfFrames;  // Use % to cycle through frames
-  luisy.getImage();
+// Thanks to Dan O'Sullivan
+
+
+
+// https://github.com/shiffman/OpenKinect-for-Processing
+
+// http://shiffman.net/p5/kinect/
+
+
+
+import org.openkinect.freenect.*;
+
+import org.openkinect.processing.*;
+
+
+
+// The kinect stuff is happening in another class
+
+KinectTracker tracker;
+
+Kinect kinect;
+
+
+
+
+
+void setup() {
+
+  size(640, 520);
+
+  kinect = new Kinect(this);
+
+  tracker = new KinectTracker();
 
 }
 
-interface backGround{
-int backgroundX = 800;
-int backgroundY = 480;
+
+
+void draw() {
+
+  background(255);
+
+
+
+  // Run the tracking analysis
+
+  tracker.track();
+
+  // Show the image
+
+  tracker.display();
+
+
+
+  // Let's draw the raw location
+
+  PVector v1 = tracker.getPos();
+
+  fill(50, 100, 250, 200);
+
+  noStroke();
+
+  ellipse(v1.x, v1.y, 20, 20);
+
+
+
+  // Let's draw the "lerped" location
+
+  PVector v2 = tracker.getLerpedPos();
+
+  fill(100, 250, 50, 200);
+
+  noStroke();
+
+  ellipse(v2.x, v2.y, 20, 20);
+
+
+
+  // Display some info
+
+  int t = tracker.getThreshold();
+
+  fill(0);
+
+  text("threshold: " + t + "    " +  "framerate: " + int(frameRate) + "    " + 
+
+    "UP increase threshold, DOWN decrease threshold", 10, 500);
+
 }
 
 
-class fish implements backGround{
-  
-  final int numberOfFrames;
-  
-  PImage[] boydImageSeq;
 
-  float pre[];
-  float cur[];
-  float fut[];
-  float sub[];
-  
-  final float imageWidth;
-  final float imageHeight;
-  
-  Random random;
+// Adjust the threshold with key presses
 
-  public fish(String name,float imageWidth,float imageHeight,int numberOfFrames){
-    // pre describes this potion's coordinate. and fut signifying future position.    
-    pre = new float[2]; // pre[0] = x, pre[1] = y;
-    fut = new float[2]; // fut[0] = x, fut[1] = y;
-    
-    //load image files.    
-    this.numberOfFrames = numberOfFrames;
-    boydImageSeq = new PImage[numberOfFrames];
-    for(int i=0; i < numberOfFrames; i++) {
-      String imageName = name + "/" + name + "_" + nf(i, 5) + ".png";
-      boydImageSeq[i] = loadImage(imageName);
+void keyPressed() {
+
+  int t = tracker.getThreshold();
+
+  if (key == CODED) {
+
+    if (keyCode == UP) {
+
+      t+=5;
+
+      tracker.setThreshold(t);
+
+    } else if (keyCode == DOWN) {
+
+      t-=5;
+
+      tracker.setThreshold(t);
+
     }
-    
-    //setting cur, pre, fut position.
-    random = new Random();
-     pre[0] = random.nextInt(backgroundX);
-     pre[1] = random.nextInt(backgroundY);
-     
-     cur = pre;
-     
-     fut[0] = random.nextInt(backgroundX);
-     fut[1] = random.nextInt(backgroundY);
-     
-     sub = new float[2];
-     sub[0] = fut[0] - pre[0];
-     sub[1] = fut[1] - pre[1];
-     
-     this.imageWidth = imageWidth;
-     this.imageHeight = imageHeight;
+
   }
+
+}
+
+// Daniel Shiffman
+
+// Tracking the average location beyond a given depth threshold
+
+// Thanks to Dan O'Sullivan
+
+
+
+// https://github.com/shiffman/OpenKinect-for-Processing
+
+// http://shiffman.net/p5/kinect/
+
+
+
+class KinectTracker {
+
+
+
+  // Depth threshold
+
+  int threshold = 745;
+
+
+
+  // Raw location
+
+  PVector loc;
+
+
+
+  // Interpolated location
+
+  PVector lerpedLoc;
+
+
+
+  // Depth data
+
+  int[] depth;
+
   
-  private void getCurPosition(){ //moving function.
-    cur[0] = cur[0] + (float) (sub[0]/backgroundX*10);
-    cur[1] = cur[1] + (float) (sub[1]/backgroundY*10);
-    
-    if(cur[0] == fut[0] && cur[1] == fut[1]){
-    pre = cur;
-    fut[0] = random.nextInt(backgroundX);
-    fut[1] = random.nextInt(backgroundY);
+
+  // What we'll show the user
+
+  PImage display;
+
+   
+
+  KinectTracker() {
+
+    // This is an awkard use of a global variable here
+
+    // But doing it this way for simplicity
+
+    kinect.initDepth();
+
+    kinect.enableMirror(true);
+
+    // Make a blank image
+
+    display = createImage(kinect.width, kinect.height, RGB);
+
+    // Set up the vectors
+
+    loc = new PVector(0, 0);
+
+    lerpedLoc = new PVector(0, 0);
+
+  }
+
+
+
+  void track() {
+
+    // Get the raw depth as array of integers
+
+    depth = kinect.getRawDepth();
+
+
+
+    // Being overly cautious here
+
+    if (depth == null) return;
+
+
+
+    float sumX = 0;
+
+    float sumY = 0;
+
+    float count = 0;
+
+
+
+    for (int x = 0; x < kinect.width; x++) {
+
+      for (int y = 0; y < kinect.height; y++) {
+
+        
+
+        int offset =  x + y*kinect.width;
+
+        // Grabbing the raw depth
+
+        int rawDepth = depth[offset];
+
+
+
+        // Testing against threshold
+
+        if (rawDepth < threshold) {
+
+          sumX += x;
+
+          sumY += y;
+
+          count++;
+
+        }
+
+      }
+
     }
-    
+
+    // As long as we found something
+
+    if (count != 0) {
+
+      loc = new PVector(sumX/count, sumY/count);
+
+    }
+
+
+
+    // Interpolating the location, doing it arbitrarily for now
+
+    lerpedLoc.x = PApplet.lerp(lerpedLoc.x, loc.x, 0.3f);
+
+    lerpedLoc.y = PApplet.lerp(lerpedLoc.y, loc.y, 0.3f);
+
   }
-  
-  public void getImage(){
-    getCurPosition();
-   image(boydImageSeq[frame], cur[0]-(imageWidth/2), cur[1]-(imageHeight/2),imageWidth,imageHeight);
+
+
+
+  PVector getLerpedPos() {
+
+    return lerpedLoc;
+
   }
-  
- 
-  
- 
+
+
+
+  PVector getPos() {
+
+    return loc;
+
+  }
+
+
+
+  void display() {
+
+    PImage img = kinect.getDepthImage();
+
+
+
+    // Being overly cautious here
+
+    if (depth == null || img == null) return;
+
+
+
+    // Going to rewrite the depth image to show which pixels are in threshold
+
+    // A lot of this is redundant, but this is just for demonstration purposes
+
+    display.loadPixels();
+
+    for (int x = 0; x < kinect.width; x++) {
+
+      for (int y = 0; y < kinect.height; y++) {
+
+
+
+        int offset = x + y * kinect.width;
+
+        // Raw depth
+
+        int rawDepth = depth[offset];
+
+        int pix = x + y * display.width;
+
+        if (rawDepth < threshold) {
+
+          // A red color instead
+
+          display.pixels[pix] = color(150, 50, 50);
+
+        } else {
+
+          display.pixels[pix] = img.pixels[offset];
+
+        }
+
+      }
+
+    }
+
+    display.updatePixels();
+
+
+
+    // Draw the image
+
+    image(display, 0, 0);
+
+  }
+
+
+
+  int getThreshold() {
+
+    return threshold;
+
+  }
+
+
+
+  void setThreshold(int t) {
+
+    threshold =  t;
+
+  }
+
 }
